@@ -1,12 +1,116 @@
 // before flashing, disable bluetooth in console to save memory
 // ESP32.enableBLE(false)
+
 var userAgent = 'Espruino (ESP32, jelly lamp)';
 var ssid = '';
 var password = '';
 
-var Time = require('time');
-var Weather = new (require('weather'))(userAgent);
-var Led = require('led');
+var weatherForecastOffice = '';
+var weatherGridX = 0;
+var weatherGridY = 0;
+
+const Wifi = require('Wifi');
+
+const Color = require('color');
+const Led = require('led');
+const Time = require('time');
+const Weather = new (require('weather'))(userAgent);
+
+const Spinner = require('spinner');
+
+// initialize display
+D18.mode('output');
+
+const pixelCount = 21;
+const display = new Led.Display(D18);
+const outerRing = new Led.StripView(12, 0, 'outerRing');
+const innerRing = new Led.StripView(8, 12, 'innerRing');
+const centerPixel = new Led.StripView(1, 20, 'centerPixel');
+
+// indicates error status
+// White: uninitialized
+// blue: wifi connection error
+// Red: unhandled error
+const statusScene = new Led.Scene(pixelCount, 1);
+statusScene.variations['default'].buffer.data.fill(255);
+
+display.enableBuffer(Spinner.buffer);
+
+const setup = new Promise((resolve, reject) => {
+	// software reset leaves wifi in a connected state, check if we are already connected
+	if(Wifi.getDetails().status === 'connected') {
+		return resolve();
+	}
+
+	const wifiTimeout = setTimeout(() => {
+		// Wifi.connect fails to notify us with an error when the wifi connection fails (post event to user fail!)
+		// assume failure after the timeout expires.
+		const wifiError = new Error('Wifi.connect timed out');
+		wifiError.color = {r: 0, g: 0, b: 255};
+		reject(wifiError);
+	}, 8000);
+
+	Wifi.connect(ssid, {password: password}, (err) => {
+		clearTimeout(wifiTimeout);
+		if(err) {
+			err.color = {r: 0, g: 0, b: 255};
+			return reject(err);
+		}
+		return resolve();
+	});
+}).then(() => {
+	console.log(`Connected to wifi. IP address is: ${Wifi.getIP().ip}`);
+
+	// Mountain Time
+	return Time.setLocalTime(-7, 'America', 'Denver').catch((err) => {
+		console.log(`Error: setLocalTime: HTTP ${err.errorType} error ${err.code}: ${err.message}`);
+		throw err;
+	});
+}).then(function() {
+	console.log(`Time set to ${new Date()}`);
+}).catch((err) => {
+	console.log(`Unhandled error: ${err.message}`);
+	console.log(err);
+	console.log(err.stack);
+	statusScene.compute(() => {
+		return err.color || {r: 255, g: 0, b: 0};
+	}).then(() => {
+		display.enableBuffer(statusScene.variations['default'].buffer);
+		throw err;
+	});
+});
+
+setup.then(() => {
+	Weather.getWeatherForecastCurrentHour(weatherForecastOffice, weatherGridX, weatherGridY).then((data) => {
+		console.log(data);
+	}).catch((err) => {
+		console.log(`HTTP ${err.errorType} error ${err.code}: ${err.message}`);
+		throw err;
+	});
+});
+
+// end main
+
+// let weatherUpdateInterval = null;
+// setup.then(() => {
+	// weatherUpdateInterval = setInterval(() => {
+	// }, 
+// });
+
+	// getWeatherGridpoint('', '').then(function(data) {});
+	// getWeatherStation('', 0, 0).then(function(data) {});
+	// getWeatherForecastHourly('', 0, 0).then(function(data) {});
+	// return getWeatherForecastCurrentHour('', 0, 0).then(function(data) {
+		// console.log(data);
+	// }).catch(function(err) {
+		// console.log(`HTTP ${err.errorType} error ${err.code}: ${err.message}`);
+		// throw err;
+	// });
+
+function computeRainbow(pixelIndex, frameIndex, pixelCount, frameCount) {
+	const hue = frameIndex/frameCount + pixelIndex/pixelCount;
+	return Color.HSVtoRGB(hue, 1 ,1);
+}
 
 /** gives the brightnesses for a circular moon phase display that mimics the illumination of the moon. e.g. at the first quarter, the right half of the display will be lit up and left will be dark.
 * assumes LED 0 at right of circle and increases counter-clockwise
@@ -61,168 +165,6 @@ function calculateMoonDisplay(phase, ledCount, attenuationDistance, terminatorOf
 	return brightness;
 }
 
-function main() {
-	var display = new Led.Display(D18, 21);
-	var outerRing = new LedStrip(display, 12, 0);
-	var innerRing = new LedStrip(display, 8, 12);
-	var centerPixel = new LedStrip(display, 1, 20);
-
-	display.draw();
-
-	var wifi = require('Wifi');
-	wifi.connect(ssid, {password: password}, function(err) {
-		if(err) {
-			console.log(`Failed to connect to wifi: ${err.message}`);
-			console.log(err);
-			return;
-		}
-
-		console.log(`Connected to Wifi. IP address is: ${wifi.getIP().ip}`);
-
-		Time.setLocalTime(-7, 'America', 'Denver').then(function() {
-			console.log(`Time set to ${new Date()}`);
-		}).catch(function(err) {
-			console.log(`Error: setLocalTime: HTTP ${err.errorType} error ${err.code}: ${err.message}`);
-		});
-
-		// getWeatherGridpoint('', '').then(function(data) {
-		// getWeatherStation('', 0, 0).then(function(data) {
-		// getWeatherForecastHourly('', 0, 0).then(function(data) {
-		/*
-		getWeatherForecastCurrentHour('', 0, 0).then(function(data) {
-			console.log(data);
-		}).catch(function(err) {
-			console.log(`HTTP ${err.errorType} error ${err.code}: ${err.message}`);
-			console.log(err.stack);
-		});
-		*/
-	});
-}
-
-main();
-
-// D18.mode('output');
-
-var neopixel = require('neopixel');
-var Led = require('led');
-var display = new Led.Display(D18, 21);
-var outerRing = new Led.StripView(display, 12, 0);
-var innerRing = new Led.StripView(display, 8, 12);
-var centerPixel = new Led.StripView(display, 1, 20);
-
-display.draw();
-
-outerRing.setPixelsSmoothly([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {r: 255, g: 0, b: 0});
-outerRing.setPixelsSmoothly([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {r: 0, g: 255, b: 0});
-outerRing.setPixelsSmoothly([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {r: 0, g: 0, b: 0});
-
-outerRing.setPixelsSmoothly([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {r: 255, g: 0, b: 0}, 1000, 60);
-outerRing.setPixelsSmoothly([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {r: 0, g: 255, b: 0}, 1000, 60);
-
-for(var b = 0; b <= 255; b++) {
-	for(var i = 0; i < outerRing.count; i++) {
-		outerRing.setRgb(i, {r:b,g:0,b:0});
-	}
-	outerRing.draw();
-}
-for(var b = 255; b >= 0; b--) {
-	for(var i = 0; i < outerRing.count; i++) {
-		outerRing.setRgb(i, {r:b,g:b,b:b});
-	}
-	outerRing.draw();
-}
-
-var frames = [];
-for(var i = 0; i <= 10; i++) {
-	frames.push(Array(21*3));
-	frames[i].fill(Math.floor(i/10 * 255));
-}
-
-var neopixel = require('neopixel');
-var index = 0;
-var increasing = true;
-var interval = setInterval(() => {
-	neopixel.write(D18, frames[index]);
-	if(increasing) {
-		index++;
-		if(index >= frames.length) {
-			increasing = false;
-			index--;
-		}
-	}
-	else {
-		index--;
-		if(index < 0) {
-			increasing = true;
-			index++;
-		}
-	}
-}, 1000/60);
-
-clearInterval(interval);
-
-for(var i = 0; i < frames.length; i++) {
-	neopixel.write(D18, frames[i]);
-}
-
-
-var pixels = Array(21*3);
-pixels.fill(0);
-for(var b = 0; b <= 255; b++) {
-	pixels.fill(b);
-	neopixel.write(D18, pixels);
-}
-for(var b = 255; b >= 0; b--) {
-	pixels.fill(b);
-	neopixel.write(D18, pixels);
-}
-
-var pixels = Array(21*3);
-pixels.fill(0);
-for(var b = 0; b <= 255; b++) {
-	for(var i = 0; i < 21; i++) {
-		pixels[i*3] = b;
-		pixels[i*3 + 1] = b;
-		pixels[i*3 + 2] = b;
-	}
-	neopixel.write(D18, pixels);
-}
-for(var b = 255; b >= 0; b--) {
-	for(var i = 0; i < 21; i++) {
-		pixels[i*3] = b;
-		pixels[i*3 + 1] = b;
-		pixels[i*3 + 2] = b;
-	}
-	neopixel.write(D18, pixels);
-}
-
-var pixels = Array(12*3);
-pixels.fill(0);
-for(var b = 0; b <= 255; b++) {
-	for(var i = 0; i < 12; i++) {
-		pixels[i*3] = b;
-	}
-	neopixel.write(D18, pixels);
-}
-for(var b = 255; b >= 0; b--) {
-	for(var i = 0; i < 21; i++) {
-		pixels[i*3] = b;
-	}
-	neopixel.write(D18, pixels);
-}
-
-
-// pixels = Array(109*3);
-// pixels.fill(0);
-// pixels[0] = 255;
-// pixels[28*3+1] = 255;
-// pixels[52*3+2] = 255;
-// pixels[72*3] = 255;
-// pixels[88*3+1] = 255;
-// pixels[100*3+2] = 255;
-// pixels[108*3] = 255;
-
-// var offset = 88;
 var offset = 0;
 var phase = 0;
 var attenuation = 0.3;
