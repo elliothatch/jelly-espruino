@@ -1,210 +1,183 @@
 var Neopixel = require('neopixel');
 var Color = require('color');
+/** 
+* Espruino is very slow so we must always precalculate animations before sending them to the LED strip.
+* To prevent hanging the current animation we also need to calculate the animations asynchronously.
+* Never copy between buffers because it is slow. Instead, allocate a new buffer and Neopixel.write that buffer directly.
+*/
+
 /** Display buffers the entire LED strip and sends data over the GPIO pin.
-* color updates should be sent to the Display via a "View" (e.g. StripView)
+* Use Display to allocate framebuffers and control animations and state changes.
+* All animations run at the same fixed framerate and must have the same number of frames per cycle.
+* @property buffers: {string: {name: string, data: Uint8ClampedArray, frameCount: number, framerate: number}}
 */
 class Display {
-	constructor(pin, count) {
+	constructor(pin) {
 		this.pin = pin;
-		this.count = count;
-		this.buffer = Array(count * 3);
-		this.buffer.fill(0);
+
+		this.activeBuffer = null;
+		this.animationInterval = null;
+		this.currentFrame = 0;
+	}
+
+	enableBuffer(buffer, options) {
+		options = Object.assign({
+			frame: 0,
+			framerate: 30,
+			playAnimation: true,
+			loop: true,
+		}, options);
+
+		if(this.animationInterval != undefined) {
+			clearInterval(this.animationInterval);
+			this.animationInterval = null;
+		}
+
+		this.activeBuffer = buffer;
+		this.currentFrame = options.frame;
+
+		this.draw();
+
+		if(this.activeBuffer.frameCount > 1 && options.playAnimation) {
+			this.animationInterval = setInterval(() => {
+				if(!options.loop && this.currentFrame === this.activeBuffer.frameCount - 1) {
+					clearInterval(this.animationInterval);
+					this.animationInterval = null;
+					return;
+				}
+				this.currentFrame = (this.currentFrame+1) % this.activeBuffer.frameCount;
+				this.draw();
+				var time = getTime();
+			}, 1000/options.framerate);
+		}
 	}
 
 	draw() {
-		Neopixel.write(D18, this.buffer);
+		const view = new Uint8ClampedArray(
+			this.activeBuffer.data.buffer,
+			this.currentFrame*(this.activeBuffer.pixelCount*3),
+			this.pixelCount*3);
+
+		Neopixel.write(this.pin, view);
 	}
 }
 
-/** StripView represents a linear segment of the Display.
-* a number of modifiers can be added to the strip. when setPixel is called, each modifier is applied to the color before it is finally applied directly to the Display buffer.
-*/
 class StripView {
-	constructor(display, count, offset) {
-		this.display = display;
-		this.count = count;
+	/** @param count - number of pixels in the view 
+	* @param  offset - number of pixels offset from beginning of the display
+	*/
+	constructor(length, offset, name) {
+		this.length = length;
 		this.offset = offset;
-
-		this.modifiers = [];
+		this.name = name || 'unnamed';
 	}
 
-	draw() {
-		this.display.draw();
-	}
-
-	getRgb(index) {
+	/** @param index - pixel index in the strip
+	* @param frame - frame index, defaults to 0
+	* @return {r: number, g: number, b: number} with integers [0,255]
+	*/
+	getRgb(buffer, index, frame) {
+		const bufferOffset = 3*((frame || 0) * buffer.pixelCount) + 3*(this.offset + index);
 		return {
-			r: this.display.buffer[(this.offset + index)*3 + 1],
-			g: this.display.buffer[(this.offset + index)*3],
-			b: this.display.buffer[(this.offset + index)*3 + 2]
+			g: buffer.data[bufferOffset],
+			r: buffer.data[bufferOffset + 1],
+			b: buffer.data[bufferOffset + 2]
 		};
 	}
 
-	setPixel(index, color) {
-		var outputColor = this.modifiers.reduce((c, modifier) => {
-			return modifier(color, {
-				index: index,
-				view: this
-			});
-		}, color);
-
-		if(outputColor.h != undefined) {
-			this.setHsv(index, outputColor);
-		}
-		else {
-			this.setRgb(index, outputColor);
-		}
+	/** @param r, g, b - integer [0,255]
+	* @param index - pixel index in the strip
+	* @param frame - frame index, defaults to 0
+	*/
+	setRgb(buffer, r, g, b, index, frame) {
+		const bufferOffset = 3*((frame || 0) * buffer.pixelCount) + 3*(this.offset + index);
+		buffer.data[bufferOffset] = g;
+		buffer.data[bufferOffset + 1] = r;
+		buffer.data[bufferOffset + 2] = b;
 	}
 
-	setPixelsSmoothly(indexes, color, transitionTime, framerate) {
-		if(transitionTime == undefined) {
-			transitionTime = 500;
-		}
-		if(framerate == undefined) {
-			framerate = 30;
-		}
-		if(color.r != undefined) {
-			color = Color.RGBtoHSV(color.r, color.g, color.b);
-		}
-
-		var startColorsHsv = indexes.map((i) => {
-			var rgb = this.getRgb(i);
-			return Color.RGBtoHSV(rgb.r, rgb.g, rgb.b);
-		});
-		var frames = Math.floor(transitionTime / (1000/framerate));
-
-		var animation = new Animation(framerate, (view, frame, a) => {
-			if(frame > frames) {
-				a.stop();
-				return;
-			}
-
-			var t = frame / frames;
-			startColorsHsv.forEach((hsvStart, i) => {
-				var c = Color.lerpHsv(hsvStart.h, hsvStart.s, hsvStart.v, color.h, color.s, color.v, t);
-				view.setPixel(indexes[i], c);
-			});
-
-			view.draw();
-		});
-		animation.start(this);
-		return animation;
-	}
-
-	/** directly modify the underlying buffer */
-	setRgb(index, rgb) {
-		this.display.buffer[(this.offset + index)*3] = rgb.g;
-		this.display.buffer[(this.offset + index)*3 + 1] = rgb.r;
-		this.display.buffer[(this.offset + index)*3 + 2] = rgb.b;
-	}
-	setHsv(index, hsv) {
-		this.setRgb(index, Color.HSVtoRGB(hsv.h, hsv.s, hsv.v));
+	/** @param h, s, v - number between [0,1]
+	* @param index - pixel index in the strip
+	* @param frame - frame index, defaults to 0
+	*/
+	setHsv(buffer, h, s, v, index, frame) {
+		const c = Color.HSVtoRGB(h, s, v);
+		this.setRgb(buffer, c.r, c.g, c.v, index, frame);
 	}
 }
 
-/** Modifiers apply transformations to a color immediately when a pixel is set.
-* Every modifier MUST be an object with a `modify(color, data)` function. `data` is the object `{index: number, view: StripView}`
-* @param pixels - either a single rgb color or an array of rgb colors. if a single color, it is applied to all modified pixels. if an array, each color is used to modify the corresponding pixel in the view
-* */
+class Scene {
+	constructor(pixelCount, frameCount, defaultVariationName) {
+		this.pixelCount = pixelCount;
+		this.frameCount = frameCount;
+		this.computeDelay = 0;
 
-class BlendModifier {
-	constructor(blendMode, pixels) {
-		this.blendMode = blendMode;
-		this.pixels = pixels;
+		this.variations = {};
+
+		this.addVariation(defaultVariationName || 'default', (r, g, b) => {
+			return {r, g, b};
+		});
 	}
 
-	modify(color, data) {
-		if(Array.isArray(this.pixels) && data.index >= this.pixels.length) {
-			return color;
+	addVariation(name, modifier) {
+		if(this.variations[name] != undefined) {
+			throw new Error(`Scene.addVariation: There is already a variation with the name '${name}'`);
 		}
 
-		var blendPixel = Array.isArray(this.pixels)?
-			this.pixels[data.index]:
-			this.pixels;
+		const variation = {
+			name: name,
+			buffer: {
+				data: new Uint8ClampedArray(this.pixelCount * 3 * this.frameCount),
+				pixelCount: this.pixelCount,
+				frameCount: this.frameCount,
+			},
+			modifier: modifier,
+		};
 
-		switch(this.blendMode) {
-			case BlendModifier.BlendMode.ADD:
-				return {
-					r: Math.min(255, color.r + blendPixel.r),
-					g: Math.min(255, color.g + blendPixel.g),
-					b: Math.min(255, color.b + blendPixel.b),
-				};
-			case BlendModifier.BlendMode.SUBTRACT:
-				return {
-					r: Math.max(0, color.r - blendPixel.r),
-					g: Math.max(0, color.g - blendPixel.g),
-					b: Math.max(0, color.b - blendPixel.b),
-				};
-			case BlendModifier.BlendMode.MULTIPLY:
-				return {
-					r: Math.floor(color.r * blendPixel.r / 255),
-					g: Math.floor(color.g * blendPixel.g / 255),
-					b: Math.floor(color.b * blendPixel.b / 255),
-				};
-			default:
-				return color;
-		}
-	}
-}
-
-BlendModifier.BlendMode = {
-	ADD: 'ADD',
-	SUBTRACT: 'SUBTRACT',
-	MULTIPLY: 'MULTIPLY',
-};
-
-/** an animation sets the pixels in a view at the given framerate. it can be given either a fixed set of frames, or a callback for dynamic animations
-* @param frames - Array of rgb[], where each element contains an array of each color in the frame of the animation, or a callback with the signature (view, frameNum, animation)
-*/
-
-class Animation {
-	constructor(framerate, frames) {
-		this.framerate = framerate;
-		this.frames = frames;
-		this.loop = false;
-
-		this.interval = null;
-		this.frame = 0;
+		this.variations[name] = variation;
+		return variation;
 	}
 
-	/** start/resume the animation. if this.frames is a callback, the value of `loop` is meaningless */
-	start(view, loop) {
-		this.loop = loop || false;
-		var callback = typeof this.frames == 'function'? this.frames: this.animateFrame;
-		this.interval = setInterval(() => {
-			callback(view, this.frame, this);
-			this.frame++;
+	compute(computeFunc, view) {
+		if(!view) {
+			view = new StripView(this.pixelCount, 0);
+		 }
+		return new Promise((resolve, reject) => {
+			const variations = Object.values(this.variations);
 
-			if(Array.isArray(this.frames) && this.frame > this.frames.length) {
-				this.frame = 0;
-			}
-		}, 1000/this.framerate);
-	}
+			let pixelIndex = 0;
+			let frameIndex = 0;
+			let variationIndex = 0;
 
-	pause() {
-		if(this.interval != null) {
-			clearInterval(this.interval);
-			this.interval = null;
-		}
-	}
+			const computePixel = () => {
+				const color = computeFunc(pixelIndex, frameIndex, view.length, this.frameCount);
+				const c = variations[variationIndex].modifier(color.r, color.g, color.b);
+				view.setRgb(variations[variationIndex].buffer, c.r, c.g, c.b, pixelIndex, frameIndex);
 
-	stop() {
-		this.pause();
-		this.frame = 0;
-	}
+				variationIndex++;
+				if(variationIndex >= variations.length) {
+					variationIndex = 0;
+					pixelIndex++;
+					if(pixelIndex >= view.length) {
+						pixelIndex = 0;
+						frameIndex++;
+						if(frameIndex >= this.frameCount) {
+							console.log(`${view.name}: Computed frame ${frameIndex}/${this.frameCount}`);
+							return resolve();
+						}
+						console.log(`${view.name}: Computed frame ${frameIndex}/${this.frameCount}`);
+					}
+				}
+				setTimeout(computePixel, this.computeDelay);
+			};
 
-	/** animateFrame is used as an unbound callback. do not use `this` inside animateFrame */
-	animateFrame(view, frame, animation) {
-		var frameColors = animation.frames[frame];
-		for(var i = 0; i < frameColors.length; i++) {
-			view.setPixel(i, frameColors[i]);
-		}
+			setTimeout(computePixel, 0);
+		});
 	}
 }
 
 exports = {
 	Display: Display,
 	StripView: StripView,
-	Animation: Animation,
-	BlendModifier: BlendModifier,
+	Scene: Scene,
 };
