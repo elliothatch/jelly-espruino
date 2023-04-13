@@ -68,6 +68,8 @@ git clone https://github.com/espruino/Espruino.git
 ```
 
 2. in `boards/ESP32.py` set `'variables': 4095` and delete `BLUETOOTH` from `build.libraries`.
+Instead of removing the BLUETOOTH module from the build, you can call `ESP32.enableBLE(false)` to disable bluetooth at runtime, which resets the ESP32. This seems to still result in less free memory than removing the module from the firmware at build-time.
+
 
 ## Build
 ```
