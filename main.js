@@ -48,6 +48,14 @@ const weatherConfig = {
 let jelly = new Jelly(D18, jellyConfig);
 jelly.setup().then(() => {
 	console.log('Setup complete.');
+
+	// configure brightness button
+	const brightnessButtonPin = D14;
+	pinMode(brightnessButtonPin, 'input_pullup');
+	const brightnessButtonWatch = setWatch((e) => {
+		jelly.setBrightness();
+	}, brightnessButtonPin, {repeat: true, edge: 'falling', debounce: 10});
+
 	let updating = false;
 	const nextTime = jelly.setUpdateTimes(
 		[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
@@ -63,6 +71,8 @@ jelly.setup().then(() => {
 
 			// get the offscreen scene for rendering
 			const scene = jelly.getOffscreenMainScene();
+
+			// test code
 			const a = jelly.activeSceneIndex == null? 1: jelly.activeSceneIndex;
 			scene.compute((pixelIndex, frameIndex, pixelCount, frameCount) => {
 				return {

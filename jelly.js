@@ -191,6 +191,12 @@ class Jelly {
 * @param index - optional index to select the brightness level (see Jelly.config). If undefined, select the next brightness level, looping back to the start if there are no more.
 * */
 	setBrightness(index) {
+		// only change brightness when one of the main scenes is active
+		if(this.activeSceneIndex == null) {
+			console.log('setBrightness: no active main scene. skipping...');
+			return;
+		}
+
 		if(index != undefined) {
 			this.brightnessIndex = index;
 		}
@@ -222,11 +228,15 @@ class Jelly {
 			this.activeSceneIndex = 1;
 		}
 
+		// TODO: compartementalize or simplify brightness-0/active scene management
 		this.activeSceneIndex = (this.activeSceneIndex + 1) % 2;
-		this.display.enableBuffer(
-			this.mainScenes[this.activeSceneIndex].variations[this.brightnessLevels[this.brightnessIndex]].buffer,
-			Object.assign(this.config.scene.options, {frame: this.display.currentFrame})
-		);
+
+		if(this.brightnessLevels[this.brightnessIndex] !== 0) {
+			this.display.enableBuffer(
+				this.mainScenes[this.activeSceneIndex].variations[this.brightnessLevels[this.brightnessIndex]].buffer,
+				Object.assign(this.config.scene.options, {frame: this.display.currentFrame})
+			);
+		}
 	}
 
 
