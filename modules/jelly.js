@@ -1,9 +1,9 @@
 const Wifi = require('Wifi');
 
 // custom modules, flashed to Espruino "Storage". Names must not collide with module at http://www.espruino.com/modules/
-const Led = require('led');
-const Time = require('time');
-const Spinner = require('spinner');
+const Led = require('led.js');
+const Time = require('time.js');
+const Spinner = require('spinner.js');
 
 /** @returns a date set to the next upcoming trigger. see Jelly.setUpdateTimes() */
 function calculateNextUpdateTime(hours, minutes, startDate) {
@@ -76,47 +76,19 @@ class Jelly {
 		this.centerPixel = new Led.StripView(1, 20, 'centerPixel');
 
 		// indicates error status
-		// White: uninitialized status
 		// blue: wifi connection error
 		// Red: unhandled error
 		// Yellow: weather data error (e.g. failed to reach NWS).
-		this.statusScene = new Led.Scene(this.pixelCount, 1);
-		this.statusScene.variations['default'].buffer.data.fill(255);
+		this.statusScene = this.createScene('status', 1);
 
 		// used when brightness === 0
 		this.blankScene = new Led.Scene(this.pixelCount, 1);
 		this.blankScene.variations['default'].buffer.data.fill(0); // not strictly necessary
 
-		// initialize main scenes
-		// array of two scenes. one scene is rendered to as the offscreen buffer while the other one is being displayed
-		this.mainScenes = [
-			new Led.Scene(this.pixelCount, this.config.scene.frameCount, {
-				name: 'main-0',
-				defaultVariationName: '100',
-			}),
-			new Led.Scene(this.pixelCount, this.config.scene.frameCount, {
-				name: 'main-1',
-				defaultVariationName: '100',
-			})
-		];
-
-		this.mainScenes.forEach((scene) => {
-			this.config.scene.brightnessLevels.forEach((brightness) => {
-				scene.addVariation('' + brightness, (r, g, b) => {
-					return {
-						r: Math.floor(r * brightness/100),
-						g: Math.floor(g * brightness/100),
-						b: Math.floor(b * brightness/100),
-					};
-				});
-			});
-		});
+		this.activeScene = null;
 
 		this.brightnessLevels = [100].concat(this.config.scene.brightnessLevels).concat(0);
 		this.brightnessIndex = 0;
-
-		// 0, 1, or null. indicates which this.mainScenes index is being displayed
-		this.activeSceneIndex = null;
 
 		this.updateTimeout = null;
 		this.onUpdate = null;
@@ -143,7 +115,7 @@ class Jelly {
 
 			Wifi.connect(this.config.wifi.ssid, {password: this.config.wifi.password}, (err) => {
 				clearTimeout(wifiTimeout);
-			if(err) {
+				if(err) {
 					err.color = {r: 0, g: 0, b: 255};
 					return reject(err);
 				}
@@ -173,27 +145,52 @@ class Jelly {
 	onError(err) {
 		console.log(`Unhandled error: ${err.message}`);
 		console.log(err);
-		this.statusScene.compute(() => {
+		return this.statusScene.compute(() => {
 			return err.color || {r: 255, g: 0, b: 0};
-			}).then(() => {
-				this.display.enableBuffer(this.statusScene.variations['default'].buffer);
-				throw err;
+		}).then(() => {
+			this.displayScene(this.statusScene);
+			throw err;
 		});
 	}
 
-	getOffscreenMainScene() {
-		return this.activeSceneIndex == null?
-			this.mainScenes[0]:
-			this.mainScenes[(this.activeSceneIndex + 1) % 2];
+	/** create a new scene with varations for configured brightness levels */
+	createScene(name, frameCount) {
+		const scene = new Led.Scene(this.pixelCount, frameCount, {
+			name: name,
+			defaultVariationName: '100'
+		});
+
+		this.config.scene.brightnessLevels.forEach((brightness) => {
+			scene.addVariation('' + brightness, (r, g, b) => {
+				return {
+					r: Math.floor(r * brightness/100),
+					g: Math.floor(g * brightness/100),
+					b: Math.floor(b * brightness/100),
+				};
+			});
+		});
+
+		return scene;
 	}
 
-	/** change the brightness level and enable the active mainScene using the new brightness
-* @param index - optional index to select the brightness level (see Jelly.config). If undefined, select the next brightness level, looping back to the start if there are no more.
-* */
+	displayScene(scene) {
+		this.activeScene = scene;
+
+		if(this.brightnessLevels[this.brightnessIndex] !== 0) {
+			this.display.enableBuffer(
+				scene.variations[this.brightnessLevels[this.brightnessIndex]].buffer,
+				this.config.scene.options
+			);
+		}
+	}
+
+	/** change the brightness level and enable the active scene using the new brightness
+	* @param index - optional index to select the brightness level (see Jelly.config). If undefined, select the next brightness level, looping back to the start if there are no more.
+	*/
 	setBrightness(index) {
 		// only change brightness when one of the main scenes is active
-		if(this.activeSceneIndex == null) {
-			console.log('setBrightness: no active main scene. skipping...');
+		if(this.activeScene == null) {
+			console.log('setBrightness: no active scene. skipping...');
 			return;
 		}
 
@@ -211,34 +208,12 @@ class Jelly {
 		}
 		else {
 			this.display.enableBuffer(
-				this.mainScenes[this.activeSceneIndex].variations[brightness].buffer,
+				this.activeScene.variations[brightness].buffer,
 				Object.assign(this.config.scene.options, {frame: this.display.currentFrame})
 			);
 		}
 		console.log(`Set brightness: ${brightness}`);
 	}
-
-	/** swaps the offsceen main scene buffer to the active buffer and displays its animation
-* @returns the now inactive main scene
-	*/
-	swapMainScene() {
-		// swaps the active/offscreen main scene being displayed
-		if(this.activeSceneIndex == null) {
-			// if no scene active, "swap" to the first scene by pretending we were showing the second scene
-			this.activeSceneIndex = 1;
-		}
-
-		// TODO: compartementalize or simplify brightness-0/active scene management
-		this.activeSceneIndex = (this.activeSceneIndex + 1) % 2;
-
-		if(this.brightnessLevels[this.brightnessIndex] !== 0) {
-			this.display.enableBuffer(
-				this.mainScenes[this.activeSceneIndex].variations[this.brightnessLevels[this.brightnessIndex]].buffer,
-				Object.assign(this.config.scene.options, {frame: this.display.currentFrame})
-			);
-		}
-	}
-
 
 	/** triggers the provided function at the specified times. clears any previous timeouts set by this function.
 	* @param hours - array containing the hours of the day to trigger the update function. values are integers from [0-23]. must be sorted in ascending order

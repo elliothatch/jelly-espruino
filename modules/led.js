@@ -1,5 +1,5 @@
 var Neopixel = require('neopixel');
-var Color = require('color');
+var Color = require('color.js');
 /** 
 * Espruino is very slow so we must always precalculate animations before sending them to the LED strip.
 * To prevent hanging the current animation we also need to calculate the animations asynchronously.
@@ -203,7 +203,7 @@ class Scene {
 						frameIndex++;
 						if(frameIndex >= this.frameCount) {
 							console.log(`${this.options.name}${view.name? '/' + view.name: ''}: Computed frame ${frameIndex}/${this.frameCount}`);
-							return resolve();
+							return resolve(this);
 						}
 							console.log(`${this.options.name}${view.name? '/' + view.name: ''}: Computed frame ${frameIndex}/${this.frameCount}`);
 					}

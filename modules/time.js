@@ -1,4 +1,4 @@
-var fetch = require('Fetch');
+var fetch = require('fetch.js');
 function getCurrentTime(area, location) {
 	var path = `/api/timezone/${area}/${location}`;
 	console.log(`GET http://worldtimeapi.org${path}`);

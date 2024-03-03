@@ -1,4 +1,4 @@
-var fetch = require('Fetch');
+var fetch = require('fetch.js');
 
 class Weather {
 

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Jelly - Bake Animation</title>
+  </head>
+  <body>
+		<script>
+			function lerp(a, b, t) {
+				return (b-a)*t + a;
+			}
+
+			function lerpHsv(h1, s1, v1, h2, s2, v2, t) {
+					// Hue interpolation
+					var h;
+					var t2 = t;
+					var d = h2 - h1;
+					if (h1 > h2)
+					{
+						// Swap (h1, h2)
+						var h3 = h2;
+						h2 = h1;
+						h1 = h3;
+
+						d = -d;
+						t2 = 1 - t;
+					}
+
+					if (d > 0.5) // 180deg
+					{
+						h1 = h1 + 1; // 360deg
+						h = ( h1 + t2 * (h2 - h1) ) % 1; // 360deg
+					}
+					if (d <= 0.5) // 180deg
+					{
+						h = h1 + t2 * d;
+					}
+
+					// Interpolates the rest
+					return {
+						h: h,
+						s: s1 + t * (s2-s1),
+						v: v1 + t * (v2-v1)
+					};
+				}
+
+			/** lerp across an HSV gradient
+			* @param stops: {color: {h, s, v}, t: number}
+			*/
+			function lerpGradientHsv(stops, t) {
+				if(t > 1) {
+					t = 1;
+				}
+				var s2Index = stops.findIndex(function(s) { return s.t > t; });
+				if(s2Index === -1) {
+					s2Index = stops.length-1;
+				}
+				var s1 = stops[s2Index-1];
+				var s2 = stops[s2Index];
+				var t2 = (t - s1.t)/(s2.t - s1.t);
+				return lerpHsv(s1.h, s1.s, s1.v, s2.h, s2.s, s2.v, t2);
+			}
+
+			function HSVtoRGB(h, s, v) {
+				var r, g, b, i, f, p, q, t;
+				if (h && s === undefined && v === undefined) {
+					s = h.s; v = h.v; h = h.h;
+				}
+				i = Math.floor(h * 6);
+				f = h * 6 - i;
+				p = v * (1 - s);
+				q = v * (1 - f * s);
+				t = v * (1 - (1 - f) * s);
+				switch (i % 6) {
+					case 0: r = v; g = t; b = p; break;
+					case 1: r = q; g = v; b = p; break;
+					case 2: r = p; g = v; b = t; break;
+					case 3: r = p; g = q; b = v; break;
+					case 4: r = t; g = p; b = v; break;
+					case 5: r = v; g = p; b = q; break;
+				}
+				return {
+					r: Math.floor(r * 255),
+					g: Math.floor(g * 255),
+					b: Math.floor(b * 255)
+				};
+			}
+
+			function RGBtoHSV(r, g, b) {
+			  r /= 255, g /= 255, b /= 255;
+
+			  var max = Math.max(r, g, b), min = Math.min(r, g, b);
+			  var h, s, v = max;
+
+			  var d = max - min;
+			  s = max == 0 ? 0 : d / max;
+
+			  if (max == min) {
+				h = 0; // achromatic
+			  } else {
+				switch (max) {
+				  case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+				  case g: h = (b - r) / d + 2; break;
+				  case b: h = (r - g) / d + 4; break;
+				}
+
+				h /= 6;
+			  }
+
+			  return {
+					h: h,
+					s: s,
+					v:v
+				};
+			}
+
+			Color = {
+				lerp: lerp,
+				lerpHsv: lerpHsv,
+				lerpGradientHsv: lerpGradientHsv,
+				HSVtoRGB: HSVtoRGB,
+				RGBtoHSV: RGBtoHSV,
+			};
+
+			// returns a javascript led buffer that can be directly imported into espruino code
+			function render(pixelCount, frameCount, computeFunc) {
+				const data = [];
+				for(let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+					for(let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++) {
+						const color = computeFunc(pixelIndex, frameIndex, pixelCount, frameCount);
+						data.push(color.r);
+						data.push(color.g);
+						data.push(color.b);
+					}
+				}
+				return {
+					pixelCount,
+					frameCount,
+					data
+				};
+			}
+
+			// converts the rendered frames object into code that can be copy-pasted into espruino source code in place of a promise that resolves a scene
+			function exportSceneCode(buffer) {
+
+				const data = buffer.data;
+				const bufferStr = `{pixelCount: ${buffer.pixelCount}, frameCount:${buffer.frameCount}, data: new Uint8ClampedArray([${data}])}`
+				const output = `return new Promise((resolve, reject) => resolve(${bufferStr}));`
+				return output;
+			};
+
+			function bake(animation) {
+				const weather = { "number": 1,
+				  "name": "",
+				  "startTime": "2024-03-02T15:00:00-07:00",
+				  "endTime": "2024-03-02T16:00:00-07:00",
+				  "isDaytime": true, "temperature": 35,
+				  "temperatureUnit": "F",
+				  "temperatureTrend": null,
+				  "probabilityOfPrecipitation": {
+					"unitCode": "wmoUnit:percent",
+					"value": 98 },
+				  "dewpoint": {
+					"unitCode": "wmoUnit:degC",
+					"value": -3.88888888888 },
+				  "relativeHumidity": {
+					"unitCode": "wmoUnit:percent",
+					"value": 67 },
+				  "windSpeed": "30 mph",
+				  "windDirection": "SW",
+				  "icon": "https://api.weather.gov/icons/land/day/snow,98?size=small",
+				  "shortForecast": "Snow Showers",
+				  "detailedForecast": ""
+				 };
+
+				const pixelCount = 21;
+				const options = {
+					framerate: 30,
+					pixelCount,
+					// fake jelly
+					jelly: {createScene: (name, frameCount) => {
+						// fake scene
+						return {
+							compute: (computeFunc) => render(pixelCount, frameCount, computeFunc)
+						};
+					}}
+				};
+
+				return animation(weather, options);
+			}
+
+			// put your animation code in here and this script will render the result
+			function unknown(weather, options) {
+				const minTemp = -30;
+				const maxTemp = 130;
+				const temperatureColorHsv = Color.lerpGradientHsv([
+					{h: 0.555, s: 1, v: 1, t: 0},
+					{h: 0.166, s: 1, v: 1, t: 0.25},
+					{h: 0, s: 1, v: 1, t: 1},
+				], (weather.temperature - minTemp) / (maxTemp - minTemp));
+
+				const temperatureColor = Color.HSVtoRGB(temperatureColorHsv.h, temperatureColorHsv.s, temperatureColorHsv.v);
+
+				const minWindSpeed = 0;
+				const maxWindSpeed = 50;
+				const windSpeed = parseInt(weather.windSpeed);
+				// pulses per second
+				const pulseRate = Color.lerp(1/15, 1/2, (windSpeed - minWindSpeed) / (maxWindSpeed - minWindSpeed));
+
+				// the animation is the length of one pulse cycle
+				const scene = options.jelly.createScene('unknown', Math.floor(options.framerate/pulseRate));
+				// const scene = options.jelly.createScene('unknown', 10);
+
+				console.log('color:', temperatureColor);
+				console.log('pulse rate:', pulseRate);
+
+				const minBrightness = 0.5;
+
+				// t is a number between 0 and 1 that starts at the bottom peak of a sin wave, rises to the top peak, and then returns to the bottom
+				return scene.compute((pixelIndex, frameIndex, pixelCount, frameCount) => {
+					const t = (Math.sin(2*Math.PI*(frameIndex/frameCount)-Math.PI/2)+1)/2;
+					return {
+						r: Math.floor(temperatureColor.r*(t*(1-minBrightness) + minBrightness)),
+						g: Math.floor(temperatureColor.g*(t*(1-minBrightness) + minBrightness)),
+						b: Math.floor(temperatureColor.b*(t*(1-minBrightness) + minBrightness)),
+					};
+				});
+			}
+
+			const buffer = bake(unknown);
+			console.log(exportSceneCode(buffer));
+		</script>
+  </body>
+</html>

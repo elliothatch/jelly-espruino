@@ -1,3 +1,4 @@
+const Color = require('color.js');
 // hardcoded rainbow spinner animation
 function computeSpinner(pixelIndex, frameIndex, pixelCount, frameCount) {
 	const hue = frameIndex/frameCount + pixelIndex/pixelCount;
