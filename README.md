@@ -1,4 +1,7 @@
 # Jelly Lamp - Espruino ESP32
+
+![Video of a 3D printed jellyfish lamp made of transulcent plastic, with circling rainbow lights emitting from the tentacles and diffusing from the bell of the jellyfish](jelly.gif)
+
 This project is an attempt to create an RGB LED (WS2812) jellyfish lamp that responds dynamically to the current weather.
 
 Every hour, the jelly uses a WiFi connection to fetch forecast data from the National Weather Service API, and generates an animation based on the current weather conditions (temperature, wind speed, precipitation, etc.)
@@ -8,6 +11,8 @@ The core components of this project include the weather API client, the LED anim
 The Jelly Lamp uses the [Espruino](https://www.espruino.com/) interpreter to run JavaScript code on an [ESP32](https://www.espruino.com/ESP32).
 
 This project was my introduction to the Espruino interpreter. Unfortunately, the project failed due to the extreme memory limitations of the ESP32 and slow execution speed of Espruino code. The project is succeeded by a FreeRTOS C implementation using the ESP32 native ESP-IDF toolchain.
+
+The Jelly Lamp concept, design, 3D modelling, and sculpture are by [Rory Tarics](http://heatdeath.net/).
 
 ## Post Mortem
 Espruino is a very interesting project, with the potential to make microprocessor programming much more accessible to those with limited coding experience. Unfortunately, the overhead of running an entire JavaScript interpreter was too great for the limited memory and processing capabilities of the ESP32 to make this project viable. It's important to keep in mind that Espruino was not created to run specifically on the ESP32. The open-source JavaScript interpreter is designed for the Espruino boards, a series of open-source microcontrollers manufactured and sold by the Espruino team. Espruino's ESP32 support is not "officially supported" by the project and is maintained through community contributions.
